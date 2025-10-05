@@ -148,6 +148,8 @@ const FretNot: React.FC = () => {
 		writeOnCharacteristic("off");
 	};
 
+	useEffect(()=>{if (chordList.length > 0) writeOnCharacteristic(chordList[chordPos].toLowerCase()), [isIntervalRunning]})
+
 	const stages = [
 		{
 			id: 0,
@@ -310,7 +312,7 @@ const FretNot: React.FC = () => {
 										? "bi bi-pause-circle-fill"
 										: "bi bi-play-circle-fill"
 								)}
-								onClick={() => setIsIntervalRunning(!isIntervalRunning)}
+								onClick={() => {setIsIntervalRunning(!isIntervalRunning)}}
 							/>
 						</motion.div>
 					</div>

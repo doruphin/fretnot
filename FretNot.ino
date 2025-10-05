@@ -2,145 +2,128 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <map>
+#include <vector>
+#include <array>
 
-BLEServer* pServer = NULL;
-BLECharacteristic* pChordCharacteristic = NULL;
+// ================= LASER MATRIX CLASS =================
+class LaserMatrix {
+public:
+    LaserMatrix() {
+        for (auto& row : MATRIX_PIN_MAP) {
+            for (int pin : row) {
+                if (pin != -1) pinMode(pin, OUTPUT);
+            }
+        }
+    }
+
+    void turnAllOff() const {
+        for (auto& row : MATRIX_PIN_MAP) {
+            for (int pin : row) {
+                if (pin != -1) digitalWrite(pin, LOW);
+            }
+        }
+    }
+
+    void displayChord(const String& chord) const {
+        auto it = chordMap.find(chord);
+        if (it == chordMap.end()) {
+            Serial.println("Unknown chord");
+            return;
+        }
+
+        for (int pin : it->second) {
+            if (pin != -1) {
+                digitalWrite(pin, HIGH);
+                Serial.printf("Pin %d ON\n", pin);
+            }
+        }
+    }
+
+private:
+    const std::array<std::array<int, 6>, 3> MATRIX_PIN_MAP {{
+        {23, 22, 21, -1, -1, -1},
+        {-1, -1, 19, 18, 5, -1},
+        {-1, -1, -1, 17, 16, -1}
+    }};
+
+    const std::map<String, std::vector<int>> chordMap {
+        {"c", {MATRIX_PIN_MAP[0][1], MATRIX_PIN_MAP[1][3], MATRIX_PIN_MAP[2][4]}},
+        {"e", {MATRIX_PIN_MAP[0][2], MATRIX_PIN_MAP[1][3], MATRIX_PIN_MAP[1][4]}},
+        {"f", {MATRIX_PIN_MAP[0][1], MATRIX_PIN_MAP[1][2], MATRIX_PIN_MAP[2][3], MATRIX_PIN_MAP[2][4]}},
+        {"fm", {MATRIX_PIN_MAP[0][0], MATRIX_PIN_MAP[0][1], MATRIX_PIN_MAP[0][2], MATRIX_PIN_MAP[2][3]}},
+    };
+};
+
+// ================= BLE CALLBACKS =================
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
+BLEServer* pServer = nullptr;
+BLECharacteristic* pChordCharacteristic = nullptr;
 
-const int MATRIX_PIN_MAP[3][6] = {
-  {23,
-  22,
-  21,
-  -1,
-  -1,
-  -1},
-  {-1,
-  -1,
-  19,
-  18,
-  5,
-  -1},
-  {-1,
-  -1,
-  -1,
-  17,
-  16,
-  -1}
-};
-
-std::map<String, std::vector<int>> chordMap = {
-  {"c", {MATRIX_PIN_MAP[0][1], MATRIX_PIN_MAP[1][3], MATRIX_PIN_MAP[2][4]}},
-  {"e", {MATRIX_PIN_MAP[0][2], MATRIX_PIN_MAP[1][3], MATRIX_PIN_MAP[1][4]}},
-  {"f", {MATRIX_PIN_MAP[0][1], MATRIX_PIN_MAP[1][2], MATRIX_PIN_MAP[2][3], MATRIX_PIN_MAP[2][4]}},
-  {"fm", {MATRIX_PIN_MAP[0][0], MATRIX_PIN_MAP[0][1], MATRIX_PIN_MAP[0][2], MATRIX_PIN_MAP[2][3]}},
-};
-
-// See the following for generating UUIDs:
-// https://www.uuidgenerator.net/
-#define SERVICE_UUID        "19b10000-e8f2-537e-4f6c-d104768a1214"
+#define SERVICE_UUID              "19b10000-e8f2-537e-4f6c-d104768a1214"
 #define CHORD_CHARACTERISTIC_UUID "19b10002-e8f2-537e-4f6c-d104768a1214"
 
-class ConnectionCallbacks: public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) {
-    deviceConnected = true;
-  };
-
-  void onDisconnect(BLEServer* pServer) {
-    deviceConnected = false;
-  }
+class ConnectionCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer*) override { deviceConnected = true; }
+  void onDisconnect(BLEServer*) override { deviceConnected = false; }
 };
 
 class GPIOCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pChordCharacteristic) {
-    String value = pChordCharacteristic->getValue(); 
-    Serial.println(value.c_str());
+  public:
+      GPIOCallbacks(LaserMatrix& matrix) : matrix(matrix) {}
 
-    if (value.length() > 0) {
-      turnAllLasersOff();
-      displayChord(chordMap[value]);
-    }
-  }
-
-  void turnAllLasersOff() {
-    for (int x = 0; x < 3; x++) {
-      for (int y = 0; y < 6; y++) {
-        digitalWrite(MATRIX_PIN_MAP[x][y], LOW);
+      void onWrite(BLECharacteristic* pCharacteristic) override {
+          String value = pCharacteristic->getValue().c_str();
+          Serial.printf("Received: %s\n", value.c_str());
+          matrix.turnAllOff();
+          matrix.displayChord(value);
       }
-    }
-  }
 
-  void displayChord(const std::vector<int>& chordPins) {
-    for (int pin : chordPins) {
-      if (pin != -1) {
-        digitalWrite(pin, HIGH);
-        Serial.println(pin);
-       } else {
-        Serial.println("WARNING: unsupported section requested");
-       } 
-    }
-      
-  }
+  private:
+      LaserMatrix& matrix;
 };
 
+// ================= SETUP & LOOP =================
+LaserMatrix matrix;
+
 void setup() {
-  Serial.begin(115200);
+    Serial.begin(115200);
+    BLEDevice::init("FretNot");
 
-  // Set all of the pins defined to output
-  for (int x = 0; x < 3; x++) {
-    for (int y = 0; y < 6; y++) {
-      pinMode(MATRIX_PIN_MAP[x][y], OUTPUT);
-    }
-  }
+    pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new ConnectionCallbacks());
 
-  // Create the BLE Device
-  BLEDevice::init("FretNot");
+    BLEService* pService = pServer->createService(SERVICE_UUID);
+    pChordCharacteristic = pService->createCharacteristic(
+        CHORD_CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_WRITE
+    );
 
-  // Create the BLE Server
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new ConnectionCallbacks());
+    pChordCharacteristic->setCallbacks(new GPIOCallbacks(matrix));
+    pChordCharacteristic->addDescriptor(new BLE2902());
+    pService->start();
 
-  // Create the BLE Service
-  BLEService *pService = pServer->createService(SERVICE_UUID);
+    BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(false);
+    pAdvertising->setMinPreferred(0x0);
+    BLEDevice::startAdvertising();
 
-  // Create the chord buttons Characteristic
-  pChordCharacteristic = pService->createCharacteristic(
-                      CHORD_CHARACTERISTIC_UUID,
-                      BLECharacteristic::PROPERTY_WRITE
-                    );
-
-  // Register the callback for the ON button characteristic
-  pChordCharacteristic->setCallbacks(new GPIOCallbacks());
-
-  // https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.descriptor.gatt.client_characteristic_configuration.xml
-  // Create a BLE Descriptor
-  pChordCharacteristic->addDescriptor(new BLE2902());
-
-  // Start the service
-  pService->start();
-
-  // Start advertising
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(false);
-  pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
-  BLEDevice::startAdvertising();
-  Serial.println("Waiting a client connection to notify...");
+    Serial.println("Waiting for a client connection...");
 }
 
 void loop() {
-  // disconnecting
-  if (!deviceConnected && oldDeviceConnected) {
-    Serial.println("Device disconnected.");
-    delay(500); // give the bluetooth stack the chance to get things ready
-    pServer->startAdvertising(); // restart advertising
-    Serial.println("Start advertising");
-    oldDeviceConnected = deviceConnected;
-  }
-  // connecting
-  if (deviceConnected && !oldDeviceConnected) {
-    // do stuff here on connecting
-    oldDeviceConnected = deviceConnected;
-    Serial.println("Device Connected");
-  }
+    if (!deviceConnected && oldDeviceConnected) {
+        Serial.println("Device disconnected.");
+        delay(500);
+        pServer->startAdvertising();
+        Serial.println("Restarted advertising.");
+        oldDeviceConnected = deviceConnected;
+    }
+
+    if (deviceConnected && !oldDeviceConnected) {
+        Serial.println("Device connected.");
+        oldDeviceConnected = deviceConnected;
+    }
 }
