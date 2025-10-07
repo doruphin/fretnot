@@ -1,4 +1,6 @@
 # FretNot 🏅 Winner of the IEEE award at Stormhacks 2025!
+### *Afraid of learning the guitar? FretNot!*
+
 Fretnot is a tool to help beginners of guitar learn the fingerings of the chords by projecting lasers on the proper frets and strings. It can also read the lyrics and chords of a song and subquentially play through the lyrics displaying the chords so you can learn alongside your favorite song. The project was made under 24 hours for [Stormhacks 2025](https://stormhacks2025.devpost.com/), which had over 750 participants.
 
 The full details can be found on the project [Devpost.](https://devpost.com/software/fretnot)
